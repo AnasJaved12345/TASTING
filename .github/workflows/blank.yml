@@ -1,4 +1,4 @@
-name: Ubuntu VPS via Ngrok
+name: Temporary Ubuntu VPS via Ngrok
 
 on:
   workflow_dispatch:
@@ -7,34 +7,36 @@ jobs:
   start-vps:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Dependencies
+      - name: Install Dependencies & Ngrok
         run: |
           sudo apt update -y
-          sudo apt install unzip curl jq -y
+          sudo apt install unzip curl jq openssh-server -y
           curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
           echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
           sudo apt update && sudo apt install ngrok -y
 
-      - name: Authenticate Ngrok
-        run: ngrok config add-authtoken ${{ secrets.NGROK_TOKEN }}
-
-      - name: Setup SSH Server
+      - name: Configure SSH Access
         run: |
-          sudo apt install openssh-server -y
-          sudo service ssh start
           echo "root:password" | sudo chpasswd
           sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo service ssh restart
 
-      - name: Start Ngrok Tunnel
+      - name: Authenticate Ngrok
+        run: ngrok config add-authtoken ${{ secrets.NGROK_TOKEN }}
+
+      - name: Start Ngrok TCP Tunnel
         run: |
           ngrok tcp 22 > /dev/null &
-          sleep 10
+          sleep 8
+          NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          IP=$(echo $NGROK_URL | cut -d ':' -f 2 | sed 's|//||')
+          PORT=$(echo $NGROK_URL | cut -d ':' -f 3)
           echo "========================= VPS INFO ========================="
-          tunnel_url=$(curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          ip=$(echo $tunnel_url | cut -d ':' -f 2 | sed 's|//||')
-          port=$(echo $tunnel_url | cut -d ':' -f 3)
-          echo "🔗 SSH Command: ssh root@$ip -p $port"
+          echo "🔗 SSH Command: ssh root@$IP -p $PORT"
           echo "🔑 Password: password"
+          echo "🕓 This VPS will stay alive for 6 hours unless manually cancelled."
           echo "==========================================================="
+
+      - name: Keep Runner Alive for 6 Hours
+        run: sleep 21600  # 6 hours in seconds
