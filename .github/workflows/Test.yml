@@ -1,4 +1,4 @@
-name: 🚀 Windows 11 RDP via Ngrok
+name: 🚀 Windows 11 RDP via Ngrok (6 Hours)
 
 on:
   workflow_dispatch:
@@ -6,51 +6,52 @@ on:
 jobs:
   RDP-Setup:
     runs-on: windows-latest
-    timeout-minutes: 360  # Max 6 hours
+    timeout-minutes: 360  # Max GitHub Actions limit
+
     steps:
-    - name: 🧼 Prep - Enable RDP & Firewall
+    - name: 🧼 Enable RDP, Create User & Configure Firewall
+      shell: pwsh
       run: |
+        # Enable RDP
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        net user runneradmin P@ssw0rd123 /add
-        net localgroup administrators runneradmin /add
-        echo "✅ RDP Enabled and user created."
 
-    - name: 🛠️ Install Ngrok
+        # Check if user exists, if not create
+        $user = Get-LocalUser -Name "runneradmin" -ErrorAction SilentlyContinue
+        if (-not $user) {
+          net user runneradmin P@ssw0rd123 /add
+        }
+
+        # Add to administrators group if not already
+        $admins = net localgroup administrators
+        if ($admins -notmatch "runneradmin") {
+          net localgroup administrators runneradmin /add
+        }
+
+        Write-Output "✅ RDP Enabled, firewall configured, user ready."
+
+    - name: 🛠️ Download & Install Ngrok
+      shell: pwsh
       run: |
-        Invoke-WebRequest -Uri https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-        Expand-Archive ngrok.zip -DestinationPath $env:USERPROFILE\ngrok
-        echo "✅ Ngrok installed."
+        Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile "$env:USERPROFILE\ngrok.zip"
+        Expand-Archive "$env:USERPROFILE\ngrok.zip" -DestinationPath "$env:USERPROFILE\ngrok"
+        echo "✅ Ngrok downloaded and extracted."
 
-    - name: 🔐 Setup Ngrok Auth Token
+    - name: 🔐 Configure Ngrok Auth Token
+      shell: pwsh
       run: |
-        $ngrok_token = "${{ secrets.NGROK_AUTH_TOKEN }}"
-        $env:NGROK_AUTHTOKEN = $ngrok_token
-        & "$env:USERPROFILE\ngrok\ngrok.exe" authtoken $ngrok_token
+        & "$env:USERPROFILE\ngrok\ngrok.exe" authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
+        echo "✅ Ngrok auth token set."
 
-    - name: 🚪 Start Ngrok TCP Tunnel (RDP 3389)
+    - name: 🚪 Start Ngrok TCP Tunnel for RDP
+      shell: pwsh
       run: |
         Start-Process -NoNewWindow -FilePath "$env:USERPROFILE\ngrok\ngrok.exe" -ArgumentList "tcp 3389"
         Start-Sleep -Seconds 10
-        echo "✅ Ngrok tunnel launched."
+        echo "✅ Ngrok TCP tunnel started."
 
-    - name: 🌐 Fetch Public RDP Address
+    - name: 🌐 Get Ngrok Public RDP Address
       id: ngrok
       shell: pwsh
       run: |
-        $ngrok_tunnel_info = Invoke-RestMethod -Uri http://localhost:4040/api/tunnels
-        $rdp_addr = $ngrok_tunnel_info.tunnels[0].public_url -replace "tcp://", ""
-        echo "::set-output name=rdp::$rdp_addr"
-
-    - name: 🖥️ Print RDP Login Info
-      run: |
-        Write-Output "📡 RDP Address: ${{ steps.ngrok.outputs.rdp }}"
-        Write-Output "👤 Username: runneradmin"
-        Write-Output "🔐 Password: P@ssw0rd123"
-
-    - name: 🧠 Anti-Idle - Keep Alive for 6 hours
-      run: |
-        for ($i = 0; $i -lt 21600; $i += 60) {
-          Write-Output "⏱️ RDP session active for $i seconds..."
-          Start-Sleep -Seconds 60
-        }
+        $tunnel = Invoke-RestMethod -Uri "http://127.0.0
