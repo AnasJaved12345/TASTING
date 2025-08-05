@@ -6,7 +6,7 @@ on:
 jobs:
   RDP-Setup:
     runs-on: windows-latest
-    timeout-minutes: 360
+    timeout-minutes: 360  # 6-hour max session
 
     steps:
     - name: 🧼 Enable RDP, Create User, Configure Firewall
@@ -16,12 +16,12 @@ jobs:
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-        # Create user if doesn't exist
+        # Create user if it doesn't exist
         if (-not (Get-LocalUser -Name "runneradmin" -ErrorAction SilentlyContinue)) {
           net user runneradmin P@ssw0rd123 /add
         }
 
-        # Add user to Administrators group safely
+        # Add user to Administrators group (safe ADSI method)
         $group = [ADSI]"WinNT://./Administrators,group"
         $memberPath = "WinNT://./runneradmin,user"
         $alreadyMember = $false
@@ -59,26 +59,42 @@ jobs:
         Start-Sleep -Seconds 10
         echo "✅ Ngrok tunnel launched."
 
-    - name: 🌐 Get Ngrok Public RDP Address
+    - name: 🌐 Get Ngrok Public RDP Address (with retry)
       id: ngrok
       shell: pwsh
       run: |
-        $tunnel = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-        $addr = $tunnel.tunnels[0].public_url -replace "tcp://", ""
-        echo "::set-output name=rdp::$addr"
-        Write-Output "✅ Public RDP: $addr"
+        $maxRetries = 30
+        $retryDelay = 5  # seconds
+        $addr = $null
 
-    - name: 🖥️ Print RDP Info
+        for ($i = 0; $i -lt $maxRetries; $i++) {
+          try {
+            $tunnel = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
+            $addr = $tunnel.tunnels[0].public_url -replace "tcp://", ""
+            echo "::set-output name=rdp::$addr"
+            Write-Output "✅ Public RDP: $addr"
+            break
+          } catch {
+            Write-Output "⏳ Ngrok not ready. Retrying in $retryDelay seconds... ($($i+1)/$maxRetries)"
+            Start-Sleep -Seconds $retryDelay
+          }
+        }
+
+        if (-not $addr) {
+          throw "❌ Ngrok tunnel failed to start after $($maxRetries * $retryDelay) seconds."
+        }
+
+    - name: 🖥️ Print RDP Login Info
       shell: pwsh
       run: |
         echo "📡 RDP Address: ${{ steps.ngrok.outputs.rdp }}"
         echo "👤 Username: runneradmin"
         echo "🔐 Password: P@ssw0rd123"
 
-    - name: 🧠 Keep Alive 6 Hours
+    - name: 🧠 Keep Runner Alive for 6 Hours
       shell: pwsh
       run: |
         for ($i = 0; $i -lt 360; $i++) {
-          Write-Output "🕒 Active: $i minutes"
+          Write-Output "🕒 RDP session active... $i minutes elapsed"
           Start-Sleep -Seconds 60
         }
