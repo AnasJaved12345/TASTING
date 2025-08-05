@@ -1,4 +1,4 @@
-name: 🚀 Windows 11 RDP via Ngrok (6 Hours)
+name: 🚀 Windows RDP via Ngrok (6 Hours)
 
 on:
   workflow_dispatch:
@@ -6,36 +6,45 @@ on:
 jobs:
   RDP-Setup:
     runs-on: windows-latest
-    timeout-minutes: 360  # Max GitHub Actions limit
+    timeout-minutes: 360
 
     steps:
-    - name: 🧼 Enable RDP, Create User & Configure Firewall
+    - name: 🧼 Enable RDP, Create User, Configure Firewall
       shell: pwsh
       run: |
         # Enable RDP
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-        # Check if user exists, if not create
-        $user = Get-LocalUser -Name "runneradmin" -ErrorAction SilentlyContinue
-        if (-not $user) {
+        # Create user if doesn't exist
+        if (-not (Get-LocalUser -Name "runneradmin" -ErrorAction SilentlyContinue)) {
           net user runneradmin P@ssw0rd123 /add
         }
 
-        # Add to administrators group if not already
-        $admins = net localgroup administrators
-        if ($admins -notmatch "runneradmin") {
-          net localgroup administrators runneradmin /add
+        # Add user to Administrators group safely
+        $group = [ADSI]"WinNT://./Administrators,group"
+        $memberPath = "WinNT://./runneradmin,user"
+        $alreadyMember = $false
+
+        foreach ($member in @($group.psbase.Invoke("Members"))) {
+          if ($member.GetType().InvokeMember("Name", 'GetProperty', $null, $member, $null) -eq "runneradmin") {
+            $alreadyMember = $true
+            break
+          }
         }
 
-        Write-Output "✅ RDP Enabled, firewall configured, user ready."
+        if (-not $alreadyMember) {
+          $group.Add($memberPath)
+        }
+
+        Write-Output "✅ RDP Enabled, user configured, firewall opened."
 
     - name: 🛠️ Download & Install Ngrok
       shell: pwsh
       run: |
         Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile "$env:USERPROFILE\ngrok.zip"
         Expand-Archive "$env:USERPROFILE\ngrok.zip" -DestinationPath "$env:USERPROFILE\ngrok"
-        echo "✅ Ngrok downloaded and extracted."
+        echo "✅ Ngrok downloaded."
 
     - name: 🔐 Configure Ngrok Auth Token
       shell: pwsh
@@ -43,15 +52,33 @@ jobs:
         & "$env:USERPROFILE\ngrok\ngrok.exe" authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
         echo "✅ Ngrok auth token set."
 
-    - name: 🚪 Start Ngrok TCP Tunnel for RDP
+    - name: 🚪 Start Ngrok TCP Tunnel
       shell: pwsh
       run: |
         Start-Process -NoNewWindow -FilePath "$env:USERPROFILE\ngrok\ngrok.exe" -ArgumentList "tcp 3389"
         Start-Sleep -Seconds 10
-        echo "✅ Ngrok TCP tunnel started."
+        echo "✅ Ngrok tunnel launched."
 
     - name: 🌐 Get Ngrok Public RDP Address
       id: ngrok
       shell: pwsh
       run: |
-        $tunnel = Invoke-RestMethod -Uri "http://127.0.0
+        $tunnel = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
+        $addr = $tunnel.tunnels[0].public_url -replace "tcp://", ""
+        echo "::set-output name=rdp::$addr"
+        Write-Output "✅ Public RDP: $addr"
+
+    - name: 🖥️ Print RDP Info
+      shell: pwsh
+      run: |
+        echo "📡 RDP Address: ${{ steps.ngrok.outputs.rdp }}"
+        echo "👤 Username: runneradmin"
+        echo "🔐 Password: P@ssw0rd123"
+
+    - name: 🧠 Keep Alive 6 Hours
+      shell: pwsh
+      run: |
+        for ($i = 0; $i -lt 360; $i++) {
+          Write-Output "🕒 Active: $i minutes"
+          Start-Sleep -Seconds 60
+        }
