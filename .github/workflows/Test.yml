@@ -1,4 +1,4 @@
-name: 🚀 Windows RDP via Ngrok (6 Hours)
+name: 🚀 Ultimate Windows RDP via Ngrok (6 Hours, Admin Access)
 
 on:
   workflow_dispatch:
@@ -6,95 +6,115 @@ on:
 jobs:
   RDP-Setup:
     runs-on: windows-latest
-    timeout-minutes: 360  # 6-hour max session
+    timeout-minutes: 360  # Max GitHub Actions runtime
 
     steps:
-    - name: 🧼 Enable RDP, Create User, Configure Firewall
+    - name: 🧼 Enable RDP, Create Admin User, Configure Firewall
       shell: pwsh
       run: |
-        # Enable RDP
+        Write-Host "🔧 Enabling Remote Desktop Protocol..."
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Write-Host "✅ RDP and firewall configured."
 
-        # Create user if it doesn't exist
+        Write-Host "🔐 Ensuring 'runneradmin' exists..."
         if (-not (Get-LocalUser -Name "runneradmin" -ErrorAction SilentlyContinue)) {
           net user runneradmin P@ssw0rd123 /add
+          Write-Host "✅ User created."
+        } else {
+          Write-Host "ℹ️ User already exists."
         }
 
-        # Add user to Administrators group (safe ADSI method)
+        Write-Host "🛡️ Adding 'runneradmin' to Administrators group..."
         $group = [ADSI]"WinNT://./Administrators,group"
         $memberPath = "WinNT://./runneradmin,user"
         $alreadyMember = $false
-
         foreach ($member in @($group.psbase.Invoke("Members"))) {
           if ($member.GetType().InvokeMember("Name", 'GetProperty', $null, $member, $null) -eq "runneradmin") {
             $alreadyMember = $true
             break
           }
         }
-
         if (-not $alreadyMember) {
           $group.Add($memberPath)
+          Write-Host "✅ 'runneradmin' added to Administrators."
+        } else {
+          Write-Host "ℹ️ Already an admin."
         }
 
-        Write-Output "✅ RDP Enabled, user configured, firewall opened."
+        Write-Host "🏁 User fully configured."
 
-    - name: 🛠️ Download & Install Ngrok
+    - name: 🛠️ Download & Extract Ngrok
       shell: pwsh
       run: |
-        Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile "$env:USERPROFILE\ngrok.zip"
-        Expand-Archive "$env:USERPROFILE\ngrok.zip" -DestinationPath "$env:USERPROFILE\ngrok"
-        echo "✅ Ngrok downloaded."
+        $ngrokPath = "$env:USERPROFILE\ngrok"
+        if (-not (Test-Path "$ngrokPath\ngrok.exe")) {
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile "$env:USERPROFILE\ngrok.zip"
+          Expand-Archive "$env:USERPROFILE\ngrok.zip" -DestinationPath "$ngrokPath"
+          Write-Host "✅ Ngrok downloaded and extracted."
+        } else {
+          Write-Host "ℹ️ Ngrok already present."
+        }
 
-    - name: 🔐 Configure Ngrok Auth Token
+    - name: 🔐 Authenticate Ngrok Token
       shell: pwsh
       run: |
         & "$env:USERPROFILE\ngrok\ngrok.exe" authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
-        echo "✅ Ngrok auth token set."
+        Write-Host "✅ Ngrok authtoken applied."
 
-    - name: 🚪 Start Ngrok TCP Tunnel
+    - name: 🚪 Start Ngrok TCP Tunnel (Port 3389)
       shell: pwsh
       run: |
         Start-Process -NoNewWindow -FilePath "$env:USERPROFILE\ngrok\ngrok.exe" -ArgumentList "tcp 3389"
         Start-Sleep -Seconds 10
-        echo "✅ Ngrok tunnel launched."
+        Write-Host "✅ Ngrok tunnel started."
 
-    - name: 🌐 Get Ngrok Public RDP Address (with retry)
+    - name: 🌐 Retrieve Ngrok Public RDP Address (with retry)
       id: ngrok
       shell: pwsh
       run: |
         $maxRetries = 30
-        $retryDelay = 5  # seconds
+        $retryDelay = 5
         $addr = $null
 
         for ($i = 0; $i -lt $maxRetries; $i++) {
           try {
-            $tunnel = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-            $addr = $tunnel.tunnels[0].public_url -replace "tcp://", ""
+            $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
+            $addr = $response.tunnels[0].public_url -replace "tcp://", ""
             echo "::set-output name=rdp::$addr"
-            Write-Output "✅ Public RDP: $addr"
+            Write-Host "✅ Ngrok tunnel is ready: $addr"
             break
           } catch {
-            Write-Output "⏳ Ngrok not ready. Retrying in $retryDelay seconds... ($($i+1)/$maxRetries)"
+            Write-Host "⏳ Attempt $($i+1)/$maxRetries: Ngrok not ready. Retrying in $retryDelay seconds..."
             Start-Sleep -Seconds $retryDelay
           }
         }
 
         if (-not $addr) {
-          throw "❌ Ngrok tunnel failed to start after $($maxRetries * $retryDelay) seconds."
+          throw "❌ Ngrok tunnel did not initialize in time."
         }
 
-    - name: 🖥️ Print RDP Login Info
+    - name: 🖥️ Display RDP Credentials
       shell: pwsh
       run: |
-        echo "📡 RDP Address: ${{ steps.ngrok.outputs.rdp }}"
-        echo "👤 Username: runneradmin"
-        echo "🔐 Password: P@ssw0rd123"
+        Write-Host "📡 RDP Address: ${{ steps.ngrok.outputs.rdp }}"
+        Write-Host "👤 Username: runneradmin"
+        Write-Host "🔐 Password: P@ssw0rd123"
+        Write-Host "⚠️ Please connect within a few minutes to avoid session timeout."
 
-    - name: 🧠 Keep Runner Alive for 6 Hours
+    - name: 🧩 (Optional) Install Extra Software
+      shell: pwsh
+      run: |
+        # Uncomment below to install Chrome or VS Code if needed
+        # iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+        # choco install googlechrome -y
+        # choco install vscode -y
+        Write-Host "🧩 Custom software installation placeholder (optional)."
+
+    - name: 🧠 Prevent Idle Timeout (6 Hours)
       shell: pwsh
       run: |
         for ($i = 0; $i -lt 360; $i++) {
-          Write-Output "🕒 RDP session active... $i minutes elapsed"
+          Write-Host "🕒 Runner active: $i minutes elapsed."
           Start-Sleep -Seconds 60
         }
