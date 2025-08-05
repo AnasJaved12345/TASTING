@@ -1,115 +1,105 @@
-name: 🚀 Windows RDP via Ngrok (6 Hours)
+name: 🚀 Windows RDP via Ngrok (Full Stability, 6 Hours)
 
 on:
   workflow_dispatch:
 
 jobs:
-  RDP-Setup:
+  rdp:
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-    - name: 🧼 Enable RDP, Create Admin User, Open Firewall
+    - name: 🔧 Enable RDP, create admin user & open firewall
       shell: pwsh
       run: |
-        # Enable RDP
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
         Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
 
-        # Create user if not exists
-        if (-not (Get-LocalUser -Name 'runneradmin' -ErrorAction SilentlyContinue)) {
-          net user runneradmin P@ssw0rd123 /add
+        $user = 'runneradmin'; $pass = 'P@ssw0rd123'
+        if (-not (Get-LocalUser -Name $user -ErrorAction SilentlyContinue)) {
+          cmd /c "net user $user $pass /add"
+        }
+        $grp = [ADSI]'WinNT://./Administrators,group'
+        $members = $grp.Invoke('Members') | ForEach-Object { $_.GetType().InvokeMember('Name','GetProperty',$null,$_,$null) }
+        if ($members -notcontains $user) {
+          $grp.Add("WinNT://./$user,user")
         }
 
-        # Add user to Administrators group
-        $group = [ADSI]'WinNT://./Administrators,group'
-        $user = 'WinNT://./runneradmin,user'
-        if (-not ($group.PSBase.Invoke('Members') | ForEach-Object { $_.GetType().InvokeMember('Name', 'GetProperty', $null, $_, $null) } | Where-Object { $_ -eq 'runneradmin' })) {
-          $group.Add($user)
-        }
-
-        Write-Host "✅ RDP Enabled, Admin user ready, Firewall configured."
-
-    - name: 🔽 Download & Setup Ngrok
+    - name: 🧩 Download Ngrok
       shell: pwsh
       run: |
-        Invoke-WebRequest -Uri 'https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip' -OutFile "$env:USERPROFILE\ngrok.zip"
-        Expand-Archive "$env:USERPROFILE\ngrok.zip" -DestinationPath "$env:USERPROFILE\ngrok"
-        echo "✅ Ngrok downloaded and extracted."
+        $zip ="$env:USERPROFILE\ngrok.zip"; $dir="$env:USERPROFILE\ngrok"
+        Invoke-WebRequest "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile $zip
+        Expand-Archive $zip -DestinationPath $dir
 
-    - name: 🔐 Set Ngrok Auth Token
+    - name: 🔐 Authenticate Ngrok
       shell: pwsh
       run: |
         & "$env:USERPROFILE\ngrok\ngrok.exe" authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
-        echo "✅ Ngrok authtoken configured."
 
-    - name: 🚪 Start Ngrok TCP Tunnel
+    - name: 🚀 Launch Ngrok tunnel
       shell: pwsh
       run: |
         Start-Process -FilePath "$env:USERPROFILE\ngrok\ngrok.exe" -ArgumentList 'tcp 3389' -WindowStyle Hidden
         Start-Sleep -Seconds 10
-        echo "✅ Ngrok tunnel starting..."
 
-    - name: 🌐 Retrieve Ngrok RDP Address
-      id: get-ngrok
+    - name: 🌐 Wait for Ngrok & Validate RDP Connectivity
+      id: ngrok
       shell: pwsh
       run: |
-        $maxRetries = 60
-        $retryDelay = 5
-        $success = $false
-
-        for ($i = 0; $i -lt $maxRetries; $i++) {
-          try {
-            $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 3
-            if ($response.tunnels.Count -gt 0) {
-              $url = $response.tunnels[0].public_url -replace 'tcp://', ''
-              echo "::set-output name=rdp::$url"
-              Write-Host "✅ Ngrok tunnel available: $url"
-              $success = $true
-              break
-            }
-          } catch {
-            Write-Host "⏳ Attempt $($i + 1)/$maxRetries: Ngrok not ready. Retrying in $retryDelay sec..."
-            Start-Sleep -Seconds $retryDelay
+        $max=60; $delay=5; $url=''; $succeeded=$false
+        for ($i=1; $i -le $max; $i++) {
+          if (-not (Get-Process ngrok -ErrorAction SilentlyContinue)) {
+            Write-Host "⚠️ Ngrok process died—restarting..."
+            Start-Process -FilePath "$env:USERPROFILE\ngrok\ngrok.exe" -ArgumentList 'tcp 3389' -WindowStyle Hidden
+            Start-Sleep -Seconds 5
+            continue
           }
+          try {
+             $t = Invoke-RestMethod -Uri 'http://127.0.0.1:4040/api/tunnels' -TimeoutSec 3
+             if ($t.tunnels.Count -gt 0) {
+               $url = $t.tunnels[0].public_url -replace 'tcp://',''
+               $parts = $url -split ':'
+               if (Test-NetConnection $parts[0] -Port ([int]$parts[1])).TcpTestSucceeded {
+                 $succeeded = $true
+                 echo "::set-output name=rdp::$url"
+                 Write-Host "✅ Ngrok and RDP reachable: $url"
+                 break
+               }
+             }
+          } catch {
+             Write-Host "Retry $i/$max: tunnel not live"
+          }
+          Start-Sleep -Seconds $delay
         }
+        if (-not $succeeded) { throw "Ngrok/RDP unreachable after $($max*$delay) seconds." }
 
-        if (-not $success) {
-          throw "❌ Ngrok tunnel failed after $($maxRetries * $retryDelay) seconds."
-        }
-
-    - name: 🖥️ Display RDP Credentials
+    - name: 🖥️ Print RDP Info
       shell: pwsh
       run: |
-        echo "📡 RDP Address: ${{ steps.get-ngrok.outputs.rdp }}"
-        echo "👤 Username: runneradmin"
-        echo "🔐 Password: P@ssw0rd123"
+        Write-Host "📡 RDP Address: ${{ steps.ngrok.outputs.rdp }}"
+        Write-Host "👤 Username: runneradmin" 
+        Write-Host "🔐 Password: P@ssw0rd123"
 
-    - name: 💻 Install Chrome / VS Code / Python / Java
+    - name: 💻 Install Chrome, VS Code, Python 3.12, Java 17
       shell: pwsh
       run: |
-        # Chrome
-        Invoke-WebRequest "https://dl.google.com/chrome/install/375.126/chrome_installer.exe" -OutFile "$env:TEMP\chrome.exe"
+        Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile "$env:TEMP\chrome.exe"
         Start-Process "$env:TEMP\chrome.exe" -ArgumentList "/silent /install" -Wait
-
-        # VS Code
         Invoke-WebRequest "https://update.code.visualstudio.com/latest/win32-x64-user/stable" -OutFile "$env:TEMP\vscode.exe"
         Start-Process "$env:TEMP\vscode.exe" -ArgumentList "/silent" -Wait
-
-        # Python
         Invoke-WebRequest "https://www.python.org/ftp/python/3.12.2/python-3.12.2-amd64.exe" -OutFile "$env:TEMP\python.exe"
         Start-Process "$env:TEMP\python.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
+        Invoke-WebRequest "https://github.com/adoptium/temurin17-binaries/releases/latest/download/OpenJDK17U-jdk_x64_windows_hotspot_latest.msi" -OutFile "$env:TEMP\java.msi"
+        Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\java.msi`" /quiet" -Wait
 
-        # Java (Adoptium)
-        Invoke-WebRequest "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.10%2B7/OpenJDK17U-jdk_x64_windows_hotspot_17.0.10_7.msi" -OutFile "$env:TEMP\java.msi"
-        Start-Process "msiexec.exe" -ArgumentList "/i `"$env:TEMP\java.msi`" /quiet" -Wait
-
-        echo "✅ Chrome, VS Code, Python, and Java installed."
-
-    - name: 🧠 Keep Alive for 6 Hours
+    - name: 🧠 Keep Session Alive (6h checkpoint)
       shell: pwsh
       run: |
-        for ($i = 0; $i -lt 360; $i++) {
-          Write-Host "🕒 Session active: $i minutes elapsed."
-          Start-Sleep -Seconds 60
+        while (Get-Date -lt (Get-Date).AddHours(6)) {
+          if (-not (Get-Process ngrok -ErrorAction SilentlyContinue)) {
+            Write-Host "❌ Ngrok died mid-session. Terminating workflow."
+            exit 1
+          }
+          Start-Sleep -Seconds 300
         }
