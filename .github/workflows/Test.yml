@@ -1,4 +1,4 @@
-name: 🖥️ Free RDP with Dev Tools (Chrome, VSCode, Python, Java)
+name: 🚀 Windows RDP via Ngrok (6 Hours)
 
 on:
   workflow_dispatch:
@@ -9,101 +9,107 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: 🔧 Enable RDP + Create Admin User
+    - name: 🧼 Enable RDP, Create Admin User, Open Firewall
       shell: pwsh
       run: |
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        # Enable RDP
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+        Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
 
-        $username = "runneradmin"
-        $password = "P@ssw0rd123"
-        if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-          net user $username $password /add
+        # Create user if not exists
+        if (-not (Get-LocalUser -Name 'runneradmin' -ErrorAction SilentlyContinue)) {
+          net user runneradmin P@ssw0rd123 /add
         }
 
-        $group = [ADSI]"WinNT://./Administrators,group"
-        $memberPath = "WinNT://./$username,user"
-        if (-not ($group.psbase.Invoke("Members") | ForEach-Object { $_.GetType().InvokeMember("Name", 'GetProperty', $null, $_, $null) } | Where-Object { $_ -eq $username })) {
-          $group.Add($memberPath)
+        # Add user to Administrators group
+        $group = [ADSI]'WinNT://./Administrators,group'
+        $user = 'WinNT://./runneradmin,user'
+        if (-not ($group.PSBase.Invoke('Members') | ForEach-Object { $_.GetType().InvokeMember('Name', 'GetProperty', $null, $_, $null) } | Where-Object { $_ -eq 'runneradmin' })) {
+          $group.Add($user)
         }
 
-    - name: 📦 Download and Setup Ngrok
+        Write-Host "✅ RDP Enabled, Admin user ready, Firewall configured."
+
+    - name: 🔽 Download & Setup Ngrok
       shell: pwsh
       run: |
-        $ngrokPath = "$env:USERPROFILE\ngrok"
-        $ngrokZip = "$env:USERPROFILE\ngrok.zip"
-        Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile $ngrokZip
-        Expand-Archive $ngrokZip -DestinationPath $ngrokPath
+        Invoke-WebRequest -Uri 'https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip' -OutFile "$env:USERPROFILE\ngrok.zip"
+        Expand-Archive "$env:USERPROFILE\ngrok.zip" -DestinationPath "$env:USERPROFILE\ngrok"
+        echo "✅ Ngrok downloaded and extracted."
 
-    - name: 🔐 Authenticate Ngrok
+    - name: 🔐 Set Ngrok Auth Token
       shell: pwsh
       run: |
         & "$env:USERPROFILE\ngrok\ngrok.exe" authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
+        echo "✅ Ngrok authtoken configured."
 
-    - name: 🚀 Start Ngrok Tunnel
+    - name: 🚪 Start Ngrok TCP Tunnel
       shell: pwsh
       run: |
-        Start-Process -NoNewWindow -FilePath "$env:USERPROFILE\ngrok\ngrok.exe" -ArgumentList "tcp 3389"
+        Start-Process -FilePath "$env:USERPROFILE\ngrok\ngrok.exe" -ArgumentList 'tcp 3389' -WindowStyle Hidden
         Start-Sleep -Seconds 10
+        echo "✅ Ngrok tunnel starting..."
 
-    - name: 🌐 Fetch Ngrok TCP Endpoint
-      id: ngrok
+    - name: 🌐 Retrieve Ngrok RDP Address
+      id: get-ngrok
       shell: pwsh
       run: |
-        $maxRetries = 30
+        $maxRetries = 60
         $retryDelay = 5
-        $tunnel = $null
-        for ($i = 1; $i -le $maxRetries; $i++) {
+        $success = $false
+
+        for ($i = 0; $i -lt $maxRetries; $i++) {
           try {
-            $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-            $tunnel = $response.tunnels[0].public_url
-            break
+            $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 3
+            if ($response.tunnels.Count -gt 0) {
+              $url = $response.tunnels[0].public_url -replace 'tcp://', ''
+              echo "::set-output name=rdp::$url"
+              Write-Host "✅ Ngrok tunnel available: $url"
+              $success = $true
+              break
+            }
           } catch {
-            Write-Host ("⏳ Attempt {0}/{1}: Retrying..." -f $i, $maxRetries)
+            Write-Host "⏳ Attempt $($i + 1)/$maxRetries: Ngrok not ready. Retrying in $retryDelay sec..."
             Start-Sleep -Seconds $retryDelay
           }
         }
-        if (-not $tunnel) {
-          throw "❌ Ngrok tunnel failed."
-        }
-        $rdp = $tunnel -replace "tcp://", ""
-        echo "::set-output name=rdp::$rdp"
 
-    - name: 🖥️ Show RDP Login Info
+        if (-not $success) {
+          throw "❌ Ngrok tunnel failed after $($maxRetries * $retryDelay) seconds."
+        }
+
+    - name: 🖥️ Display RDP Credentials
       shell: pwsh
       run: |
-        echo "📡 Address: ${{ steps.ngrok.outputs.rdp }}"
+        echo "📡 RDP Address: ${{ steps.get-ngrok.outputs.rdp }}"
         echo "👤 Username: runneradmin"
         echo "🔐 Password: P@ssw0rd123"
 
-    - name: 🌍 Install Google Chrome
+    - name: 💻 Install Chrome / VS Code / Python / Java
       shell: pwsh
       run: |
-        Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile "$env:TEMP\chrome.exe"
+        # Chrome
+        Invoke-WebRequest "https://dl.google.com/chrome/install/375.126/chrome_installer.exe" -OutFile "$env:TEMP\chrome.exe"
         Start-Process "$env:TEMP\chrome.exe" -ArgumentList "/silent /install" -Wait
 
-    - name: 🧠 Install Visual Studio Code
-      shell: pwsh
-      run: |
-        Invoke-WebRequest -Uri "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user" -OutFile "$env:TEMP\vscode.exe"
-        Start-Process "$env:TEMP\vscode.exe" -ArgumentList "/silent /mergetasks=!runcode" -Wait
+        # VS Code
+        Invoke-WebRequest "https://update.code.visualstudio.com/latest/win32-x64-user/stable" -OutFile "$env:TEMP\vscode.exe"
+        Start-Process "$env:TEMP\vscode.exe" -ArgumentList "/silent" -Wait
 
-    - name: 🐍 Install Python 3.12
-      shell: pwsh
-      run: |
-        Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.12.2/python-3.12.2-amd64.exe" -OutFile "$env:TEMP\python.exe"
-        Start-Process "$env:TEMP\python.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" -Wait
+        # Python
+        Invoke-WebRequest "https://www.python.org/ftp/python/3.12.2/python-3.12.2-amd64.exe" -OutFile "$env:TEMP\python.exe"
+        Start-Process "$env:TEMP\python.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
 
-    - name: ☕ Install Java JDK 17
-      shell: pwsh
-      run: |
-        Invoke-WebRequest -Uri "https://download.oracle.com/java/17/latest/jdk-17_windows-x64_bin.exe" -OutFile "$env:TEMP\jdk.exe"
-        Start-Process "$env:TEMP\jdk.exe" -ArgumentList "/s" -Wait
+        # Java (Adoptium)
+        Invoke-WebRequest "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.10%2B7/OpenJDK17U-jdk_x64_windows_hotspot_17.0.10_7.msi" -OutFile "$env:TEMP\java.msi"
+        Start-Process "msiexec.exe" -ArgumentList "/i `"$env:TEMP\java.msi`" /quiet" -Wait
 
-    - name: 🕒 Keep Session Alive (6 Hours)
+        echo "✅ Chrome, VS Code, Python, and Java installed."
+
+    - name: 🧠 Keep Alive for 6 Hours
       shell: pwsh
       run: |
         for ($i = 0; $i -lt 360; $i++) {
-          Write-Host "🕒 $i minutes elapsed..."
+          Write-Host "🕒 Session active: $i minutes elapsed."
           Start-Sleep -Seconds 60
         }
