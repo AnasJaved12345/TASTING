@@ -6,64 +6,62 @@ on:
 jobs:
   rdp:
     runs-on: windows-latest
+    timeout-minutes: 360
 
     steps:
-    - name: ✅ Setup Variables
+    - name: ✅ Setup RDP User
       shell: powershell
       run: |
         $username = "runneradmin"
         $password = "MyPass12345"
 
-        # Create user if not exists
-        net user $username $password /add | Out-Null
-        net localgroup administrators $username /add | Out-Null
-        Write-Host "$username is already in administrators group"
+        # Check if user exists
+        $userExists = net user $username 2>$null
+        if (-not $userExists) {
+          Write-Host "🔹 Creating user $username..."
+          net user $username $password /add /y | Out-Null
+        } else {
+          Write-Host "ℹ️ User $username already exists."
+        }
 
-    - name: ✅ Enable RDP & Allow Firewall
+        # Check if user is in Administrators group
+        $isInGroup = net localgroup administrators | Select-String -Pattern $username
+        if (-not $isInGroup) {
+          Write-Host "🔹 Adding $username to Administrators group..."
+          net localgroup administrators $username /add | Out-Null
+        } else {
+          Write-Host "ℹ️ $username is already in Administrators group."
+        }
+
+        exit 0
+
+    - name: ✅ Enable RDP and Firewall
       shell: powershell
       run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Write-Host "✅ RDP enabled and firewall allowed."
 
-    - name: 📦 Download Cloudflared
+    - name: ✅ Download and Launch Cloudflared Tunnel
       shell: powershell
       run: |
-        Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
-
-    - name: 🚀 Start Cloudflare Tunnel (background)
-      shell: powershell
-      run: |
-        Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel", "--url", "rdp://localhost:3389", "--logfile", "cloudflared.log", "--loglevel", "info"
+        Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
+        Start-Process -WindowStyle Hidden -FilePath cloudflared.exe -ArgumentList 'tunnel', '--url', 'rdp://localhost:3389'
         Start-Sleep -Seconds 20
 
-    - name: 🌐 Extract and Print Tunnel URL
+    - name: 🔍 Show Cloudflared Tunnel URL
       shell: powershell
       run: |
-        $logPath = "cloudflared.log"
-        $maxTries = 10
-        $success = $false
-
-        for ($i = 0; $i -lt $maxTries; $i++) {
-          if (Test-Path $logPath) {
-            $url = Get-Content $logPath | Select-String -Pattern "trycloudflare.com" | Select-Object -Last 1
-            if ($url) {
-              Write-Host "`n🌍 RDP Tunnel URL:"
-              Write-Host "👉 $($url.Line)"
-              $success = $true
-              break
-            }
-          }
-          Start-Sleep -Seconds 3
+        $logs = Get-Content "$env:USERPROFILE\.cloudflared\logs\*.log" -ErrorAction SilentlyContinue | Select-String -Pattern "trycloudflare.com" | Select-Object -Last 1
+        if ($logs) {
+          Write-Host "🔗 RDP Tunnel URL: $($logs.Line)"
+        } else {
+          Write-Host "⚠️ Could not auto-detect the tunnel URL. Please open runner logs manually."
         }
 
-        if (-not $success) {
-          Write-Host "❌ Could not find Cloudflare tunnel URL."
-        }
-
-    - name: 🧑‍💻 RDP Credentials
-      shell: powershell
+    - name: ℹ️ Show Login Info
       run: |
-        Write-Host "`n🟢 RDP session ready!"
-        Write-Host "👉 Connect using:"
-        Write-Host "   ➤ Username: runneradmin"
-        Write-Host "   ➤ Password: MyPass12345"
+        Write-Host "🧑‍💻 Connect using:"
+        Write-Host "  ➤ User: runneradmin"
+        Write-Host "  ➤ Pass: MyPass12345"
+        Write-Host "  ⏳ Tunnel will remain active for up to 6 hours"
