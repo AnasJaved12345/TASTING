@@ -1,11 +1,11 @@
-name: ⚡ Windows RDP via Ngrok
+name: ⚡ Secure Windows RDP with Ngrok
 
 on:
   workflow_dispatch:
 
 jobs:
   rdp:
-    name: 💻 Windows RDP Session
+    name: 💻 Start RDP Session
     runs-on: windows-latest
     timeout-minutes: 360
 
@@ -13,46 +13,56 @@ jobs:
       NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
     steps:
-    - name: 🧪 Show System Info
+    - name: 📊 System Info
       run: systeminfo
 
-    - name: 📥 Download and Configure Ngrok
+    - name: 📥 Download & Configure Ngrok (no errors)
       shell: powershell
       run: |
         Write-Host "📦 Downloading Ngrok..."
-        Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile "ngrok.zip"
-        Expand-Archive "ngrok.zip" -DestinationPath "$PWD"
-        Write-Host "🔐 Setting Ngrok Authtoken..."
-        .\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+        $zipPath = "$env:RUNNER_TEMP\ngrok.zip"
+        $extractPath = "$env:RUNNER_TEMP\ngrok"
+        Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile $zipPath
+        Expand-Archive -Path $zipPath -DestinationPath $extractPath
+        $ngrokPath = Join-Path $extractPath "ngrok.exe"
+        Write-Host "🔐 Setting Ngrok authtoken..."
+        & "$ngrokPath" authtoken $env:NGROK_AUTH_TOKEN
+        echo "NGROK_PATH=$ngrokPath" >> $env:GITHUB_ENV
 
-    - name: 🔐 Enable RDP and Configure Firewall
+    - name: 🔐 Enable RDP and Open Firewall
       shell: powershell
       run: |
+        Write-Host "🔧 Enabling RDP and setting password..."
         net user runneradmin "RDPpassword123!"
         Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    - name: 🚀 Start Ngrok Tunnel for RDP (TCP 3389)
+    - name: 🚀 Start Ngrok Tunnel for RDP
       shell: powershell
       run: |
-        Start-Process -NoNewWindow -FilePath "$PWD\ngrok.exe" -ArgumentList "tcp 3389"
+        Write-Host "🚀 Starting Ngrok tunnel on port 3389..."
+        Start-Process -NoNewWindow -FilePath "$env:NGROK_PATH" -ArgumentList "tcp 3389"
         Start-Sleep -Seconds 15
 
-    - name: 🌍 Get RDP Connection Address
+    - name: 🌍 Get Public RDP Address
       shell: powershell
       run: |
-        $tunnel = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-        $publicUrl = $tunnel.tunnels[0].public_url
-        $cleanUrl = $publicUrl -replace "tcp://", ""
-        Write-Output "🖥️ Connect using:"
-        Write-Output "🔗 Address: $cleanUrl"
-        Write-Output "👤 Username: runneradmin"
-        Write-Output "🔑 Password: RDPpassword123!"
+        $tunnelInfo = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
+        $publicUrl = $tunnelInfo.tunnels[0].public_url -replace "tcp://", ""
+        Write-Host ""
+        Write-Host "✅ ✅ ✅  RDP Session Ready!"
+        Write-Host "🖥️  Connect to your remote machine:"
+        Write-Host "🔗 Address: $publicUrl"
+        Write-Host "👤 Username: runneradmin"
+        Write-Host "🔑 Password: RDPpassword123!"
+        Write-Host ""
+        Write-Host "⚠️ This session will automatically close after ~6 hours."
 
-    - name: 🔧 Install Dev Tools (Python, Chrome, VSCode)
+    - name: 🔧 Install Development Tools
       shell: powershell
       run: |
+        Write-Host "📦 Installing development tools..."
         winget install -e --id Python.Python.3
         winget install -e --id Google.Chrome
         winget install -e --id Microsoft.VisualStudioCode
-        Write-Host "✅ All development tools installed."
+        Write-Host "✅ Dev tools installed!"
