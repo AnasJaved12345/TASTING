@@ -18,7 +18,6 @@ jobs:
         # Check if user exists
         $userExists = net user $username 2>$null
         if (-not $userExists) {
-          Write-Host "🔹 Creating user $username..."
           net user $username $password /add /y | Out-Null
         } else {
           Write-Host "ℹ️ User $username already exists."
@@ -27,10 +26,9 @@ jobs:
         # Check if user is in Administrators group
         $isInGroup = net localgroup administrators | Select-String -Pattern $username
         if (-not $isInGroup) {
-          Write-Host "🔹 Adding $username to Administrators group..."
           net localgroup administrators $username /add | Out-Null
         } else {
-          Write-Host "ℹ️ $username is already in Administrators group."
+          Write-Host "ℹ️ $username already in Administrators group."
         }
 
         exit 0
@@ -42,7 +40,7 @@ jobs:
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Write-Host "✅ RDP enabled and firewall allowed."
 
-    - name: ✅ Download and Launch Cloudflared Tunnel
+    - name: ✅ Download and Start Cloudflared Tunnel
       shell: powershell
       run: |
         Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
@@ -52,7 +50,13 @@ jobs:
     - name: 🔍 Show Cloudflared Tunnel URL
       shell: powershell
       run: |
-        $logs = Get-Content "$env:USERPROFILE\.cloudflared\logs\*.log" -ErrorAction SilentlyContinue | Select-String -Pattern "trycloudflare.com" | Select-Object -Last 1
+        $logs = Get-ChildItem "$env:USERPROFILE\.cloudflared\logs\" -Filter *.log -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1 |
+                Get-Content |
+                Select-String -Pattern "trycloudflare.com" |
+                Select-Object -Last 1
+
         if ($logs) {
           Write-Host "🔗 RDP Tunnel URL: $($logs.Line)"
         } else {
