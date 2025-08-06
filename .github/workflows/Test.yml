@@ -1,59 +1,58 @@
-# .github/workflows/windows-rdp.yml
-
-name: ⚡ Windows RDP with Ngrok
+name: ⚡ Windows RDP via Ngrok
 
 on:
   workflow_dispatch:
-    inputs:
-      NGROK_AUTH_TOKEN:
-        description: "Enter your Ngrok Auth Token"
-        required: true
 
 jobs:
   rdp:
-    name: 💻 Start Windows RDP Session
+    name: 💻 Windows RDP Session
     runs-on: windows-latest
     timeout-minutes: 360
 
+    env:
+      NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+
     steps:
-    - name: 🧪 Show Basic Info
+    - name: 🧪 Show System Info
       run: systeminfo
 
-    - name: 🧰 Install Ngrok
+    - name: 📥 Download and Configure Ngrok
       shell: powershell
       run: |
-        Write-Host "📥 Downloading Ngrok..."
-        Invoke-WebRequest "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile "ngrok.zip"
-        Expand-Archive ngrok.zip -DestinationPath "$PWD"
-        ./ngrok.exe authtoken "${{ github.event.inputs.NGROK_AUTH_TOKEN }}"
+        Write-Host "📦 Downloading Ngrok..."
+        Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+        Expand-Archive "ngrok.zip" -DestinationPath "$PWD"
+        Write-Host "🔐 Setting Ngrok Authtoken..."
+        .\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
 
-    - name: 🔐 Enable RDP and Set Password
+    - name: 🔐 Enable RDP and Configure Firewall
       shell: powershell
       run: |
         net user runneradmin "RDPpassword123!"
         Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    - name: 🚀 Start Ngrok Tunnel for RDP
+    - name: 🚀 Start Ngrok Tunnel for RDP (TCP 3389)
       shell: powershell
       run: |
         Start-Process -NoNewWindow -FilePath "$PWD\ngrok.exe" -ArgumentList "tcp 3389"
         Start-Sleep -Seconds 15
 
-    - name: 🌍 Get RDP Address
+    - name: 🌍 Get RDP Connection Address
       shell: powershell
       run: |
-        $tunnelInfo = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-        $rdpAddress = $tunnelInfo.tunnels[0].public_url -replace "tcp://", ""
-        echo "🖥️ RDP Connection Info:"
-        echo "🔗 Address: $rdpAddress"
-        echo "👤 Username: runneradmin"
-        echo "🔑 Password: RDPpassword123!"
+        $tunnel = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
+        $publicUrl = $tunnel.tunnels[0].public_url
+        $cleanUrl = $publicUrl -replace "tcp://", ""
+        Write-Output "🖥️ Connect using:"
+        Write-Output "🔗 Address: $cleanUrl"
+        Write-Output "👤 Username: runneradmin"
+        Write-Output "🔑 Password: RDPpassword123!"
 
-    - name: 🔧 Install Python, Chrome, and VSCode
+    - name: 🔧 Install Dev Tools (Python, Chrome, VSCode)
       shell: powershell
       run: |
-        Write-Host "🔧 Installing Dev Tools..."
         winget install -e --id Python.Python.3
         winget install -e --id Google.Chrome
         winget install -e --id Microsoft.VisualStudioCode
+        Write-Host "✅ All development tools installed."
