@@ -1,58 +1,61 @@
-name: 🖥️ Free RDP via Cloudflare Tunnel
+name: 🖥️ Free RDP via Cloudflare Tunnel (No Ngrok)
 
 on: [workflow_dispatch]
 
 jobs:
-  free-rdp:
+  rdp:
     runs-on: windows-latest
 
     steps:
-    - name: 🧾 Set RDP Password
+    - name: 🔐 Create RDP User
       run: |
-        net user runneradmin "MySecurePassword123!" /add
-        net localgroup administrators runneradmin /add
-        Write-Host "✅ User runneradmin created with password."
+        $username = "runneradmin"
+        $password = "MyPass12345"
+        
+        # Check if user exists
+        $userExists = net user $username | Out-Null; if ($LASTEXITCODE -eq 0) { $true } else { $false }
 
-    - name: 🔐 Enable RDP and Firewall
+        if (-not $userExists) {
+          net user $username $password /add
+        } else {
+          Write-Host "ℹ️ User $username already exists"
+          net user $username $password  # Reset password
+        }
+
+        # Add to Administrators group if not already
+        net localgroup administrators | findstr /C:"$username"
+        if ($LASTEXITCODE -ne 0) {
+          net localgroup administrators $username /add
+        } else {
+          Write-Host "ℹ️ $username is already in administrators group"
+        }
+
+    - name: ✅ Enable RDP and Allow Firewall
       run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Write-Host "✅ RDP Enabled and firewall rule applied."
+        Write-Host "✅ RDP enabled and firewall allowed."
 
-    - name: 📦 Install Cloudflare Tunnel
+    - name: 📦 Install Cloudflared
       run: |
         Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
         Move-Item cloudflared.exe C:\Windows\System32\cloudflared.exe
-        Write-Host "✅ Cloudflared installed."
+        Write-Host "✅ Cloudflared installed"
 
-    - name: 🚇 Start Cloudflare Tunnel to RDP (port 3389)
+    - name: 🌐 Start Tunnel to RDP (3389)
       run: |
-        Start-Process -NoNewWindow -FilePath "cloudflared.exe" -ArgumentList 'tunnel', '--url', 'rdp://localhost:3389'
+        Start-Process -WindowStyle Hidden -FilePath cloudflared.exe -ArgumentList 'tunnel', '--url', 'rdp://localhost:3389'
         Start-Sleep -Seconds 15
-        Write-Host "✅ Tunnel started in background."
 
-    - name: 🌐 Get Public RDP Tunnel URL
+    - name: 🖥️ Tunnel Info (Manual Copy)
       run: |
-        $url = ""
-        for ($i=0; $i -lt 30; $i++) {
-            $tunnelLogs = Get-Content "$env:USERPROFILE\.cloudflared\*.log" -ErrorAction SilentlyContinue
-            if ($tunnelLogs -match "trycloudflare.com") {
-                $url = ($tunnelLogs | Select-String -Pattern "trycloudflare.com" | Select-Object -Last 1).Line
-                break
-            }
-            Start-Sleep -Seconds 2
-        }
-        if ($url -eq "") {
-            Write-Host "❌ Could not retrieve Cloudflare URL."
-        } else {
-            Write-Host "✅ Your RDP is available at this Cloudflare URL:"
-            Write-Host "🔗 $url"
-            Write-Host "🖥️ Connect using:"
-            Write-Host "  ➤ Username: runneradmin"
-            Write-Host "  ➤ Password: MySecurePassword123!"
-        }
+        Write-Host "🔒 Cloudflare tunnel running."
+        Write-Host "⏳ Wait ~20s then open the runner logs to find the *.trycloudflare.com URL in logs."
+        Write-Host "🧑‍💻 Connect with:"
+        Write-Host "  ➤ User: runneradmin"
+        Write-Host "  ➤ Pass: MyPass12345"
 
-    - name: 🕒 Keep the session alive for 6 hours
+    - name: 🕒 Keep Alive (6 Hours)
       run: |
-        Write-Host "🟢 Keeping runner alive for 6 hours..."
+        Write-Host "🟢 RDP session ready for up to 6 hours..."
         Start-Sleep -Seconds 21600
