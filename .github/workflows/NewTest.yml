@@ -1,0 +1,65 @@
+name: Unique Windows RDP with Software Installation
+on:
+  workflow_dispatch:
+jobs:
+  setup-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360 # 6 hours
+    steps:
+      - name: Initialize Environment
+        run: |
+          Write-Output "Starting environment setup for RDP and software installation"
+          New-Item -ItemType Directory -Path "C:\Setup" -Force
+      - name: Download ngrok
+        run: |
+          Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile C:\Setup\ngrok.zip
+      - name: Extract ngrok
+        run: |
+          Expand-Archive -Path C:\Setup\ngrok.zip -DestinationPath C:\Setup\ngrok
+      - name: Authenticate ngrok
+        run: |
+          C:\Setup\ngrok\ngrok.exe config add-authtoken $Env:NGROK_AUTH_TOKEN
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      - name: Configure RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "SecureRDP2025!" -Force)
+      - name: Install Google Chrome
+        run: |
+          Invoke-WebRequest https://dl.google.com/chrome/install/ChromeSetup.exe -OutFile C:\Setup\ChromeSetup.exe
+          Start-Process -FilePath C:\Setup\ChromeSetup.exe -ArgumentList "/silent /install" -Wait
+          Write-Output "Google Chrome installed successfully"
+      - name: Install Python
+        run: |
+          Invoke-WebRequest https://www.python.org/ftp/python/3.12.0/python-3.12.0-amd64.exe -OutFile C:\Setup\python-installer.exe
+          Start-Process -FilePath C:\Setup\python-installer.exe -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
+          Write-Output "Python 3.12 installed successfully"
+      - name: Install Visual Studio Code
+        run: |
+          Invoke-WebRequest https://update.code.visualstudio.com/latest/win32-x64-user/stable -OutFile C:\Setup\VSCodeSetup.exe
+          Start-Process -FilePath C:\Setup\VSCodeSetup.exe -ArgumentList "/VERYSILENT /MERGETASKS=!runcode" -Wait
+          Write-Output "Visual Studio Code installed successfully"
+      - name: Start ngrok Tunnel
+        run: |
+          Start-Process -FilePath "C:\Setup\ngrok\ngrok.exe" -ArgumentList "tcp 3389 --region us" -NoNewWindow
+      - name: Retrieve ngrok Tunnel Details
+        run: |
+          Start-Sleep -Seconds 10
+          $tunnelInfo = Invoke-WebRequest -Uri http://localhost:4040/api/tunnels -UseBasicParsing | ConvertFrom-Json
+          $rdpUrl = $tunnelInfo.tunnels[0].public_url -replace '^tcp://', ''
+          echo "RDP_CONNECTION_URL=$rdpUrl" >> $env:GITHUB_ENV
+          echo "RDP Credentials:"
+          echo "Username: runneradmin"
+          echo "Password: SecureRDP2025!"
+          echo "Connect using an RDP client to: $rdpUrl"
+      - name: Verify Software Installation
+        run: |
+          python --version
+          code --version
+          & "C:\Program Files\Google\Chrome\Application\chrome.exe" --version
+      - name: Keep Workflow Active
+        run: |
+          Start-Sleep -Seconds 21600 # 6 hours
