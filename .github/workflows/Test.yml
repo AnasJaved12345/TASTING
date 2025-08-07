@@ -1,4 +1,4 @@
-name: Temporary Ubuntu VPS
+name: Temporary Ubuntu VPS with Chrome & Python Environment
 
 on:
   workflow_dispatch:
@@ -6,48 +6,52 @@ on:
 jobs:
   start-vps:
     runs-on: ubuntu-latest
-
     steps:
       - name: Install Dependencies & Ngrok
         run: |
           sudo apt update -y
-          sudo apt install unzip curl jq wget gnupg software-properties-common openssh-server -y
+          sudo apt install -y unzip curl jq openssh-server python3 python3-pip wget software-properties-common gnupg
 
-          # Add Ngrok package
-          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
-          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-          sudo apt update && sudo apt install ngrok -y
-
-      - name: Install Google Chrome (Latest)
-        run: |
+          # Install latest Chrome
           wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt install -y ./google-chrome-stable_current_amd64.deb
+          sudo apt install -y ./google-chrome-stable_current_amd64.deb || sudo apt --fix-broken install -y
           rm google-chrome-stable_current_amd64.deb
 
-      - name: Configure Full Root SSH Access
+          # Install undetected_chromedriver and required Python libs
+          python3 -m pip install --upgrade pip
+          pip3 install undetected-chromedriver selenium
+
+          # Ngrok setup
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt update && sudo apt install -y ngrok
+
+      - name: Configure SSH for Root Access
         run: |
           echo "root:password" | sudo chpasswd
-          sudo sed -i 's/#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-          sudo sed -i 's/#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          sudo sed -i 's/#\?PermitEmptyPasswords.*/PermitEmptyPasswords no/' /etc/ssh/sshd_config
-          sudo systemctl restart ssh
+          sudo sed -i 's/^#\?PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo systemctl enable ssh
+          sudo service ssh restart
 
       - name: Authenticate Ngrok
         run: ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
 
-      - name: Start Ngrok TCP Tunnel for SSH
+      - name: Start Ngrok TCP Tunnel
         run: |
-          ngrok tcp 22 > /dev/null &
-          sleep 8
-          NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          IP=$(echo $NGROK_URL | cut -d ':' -f 2 | sed 's|//||')
-          PORT=$(echo $NGROK_URL | cut -d ':' -f 3)
-          echo "========================= VPS INFO ========================="
+          nohup ngrok tcp 22 > /dev/null &
+          sleep 10
+          curl -s http://127.0.0.1:4040/api/tunnels > tunnels.json
+          HOST=$(jq -r '.tunnels[0].public_url' tunnels.json)
+          IP=$(echo $HOST | cut -d ':' -f 2 | sed 's|//||')
+          PORT=$(echo $HOST | cut -d ':' -f 3)
+
+          echo "================ VPS SSH INFO ================"
           echo "🔗 SSH Command: ssh root@$IP -p $PORT"
           echo "🔑 Password: password"
-          echo "🧠 Chrome Installed: google-chrome --version"
-          echo "🕓 This VPS will stay alive for 6 hours unless manually cancelled."
-          echo "==========================================================="
+          echo "💻 Chrome, Python, and undetected_chromedriver preinstalled"
+          echo "🕓 Uptime: 6 hours (auto-terminate after that)"
+          echo "=============================================="
 
-      - name: Keep Runner Alive for 6 Hours
-        run: sleep 21600  # 6 hours
+      - name: Keep VPS Alive for 6 Hours
+        run: sleep 21600
