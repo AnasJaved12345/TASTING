@@ -1,4 +1,4 @@
-name: Fixed Windows RDP with Software Installation
+name: Enhanced Windows RDP with Software Installation
 on:
   workflow_dispatch:
 jobs:
@@ -8,18 +8,18 @@ jobs:
     steps:
       - name: Initialize Setup Directory
         run: |
-          Write-Output "Initializing setup for RDP and software installation"
-          New-Item -ItemType Directory -Path "C:\RDPSetup" -Force
+          Write-Output "Initializing environment for RDP and software setup"
+          New-Item -ItemType Directory -Path "C:\RDPEnhanced" -Force
       - name: Download ngrok
         run: |
-          Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile C:\RDPSetup\ngrok.zip
+          Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile C:\RDPEnhanced\ngrok.zip
         continue-on-error: true
       - name: Extract ngrok
         run: |
-          Expand-Archive -Path C:\RDPSetup\ngrok.zip -DestinationPath C:\RDPSetup\ngrok
+          Expand-Archive -Path C:\RDPEnhanced\ngrok.zip -DestinationPath C:\RDPEnhanced\ngrok
       - name: Authenticate ngrok
         run: |
-          C:\RDPSetup\ngrok\ngrok.exe config add-authtoken $Env:NGROK_AUTH_TOKEN
+          C:\RDPEnhanced\ngrok\ngrok.exe config add-authtoken $Env:NGROK_AUTH_TOKEN
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
       - name: Configure RDP
@@ -27,39 +27,58 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "RDPSetup2025!" -Force)
+          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "EnhancedRDP2025!" -Force)
       - name: Install Google Chrome
         run: |
           $chromeUrl = "https://dl.google.com/tag/s/appguid%3D%7B8A69D345-D564-463C-AFF1-A69D9E530F96%7D%26iid%3D%7B00000000-0000-0000-0000-000000000000%7D%26lang%3Den%26browser%3D4%26usagestats%3D0%26appname%3DGoogle%2520Chrome%26needsadmin%3Dtrue%26ap%3Dx64-stable-statsdef_1%26brand%3DGCEA/dl/chrome/install/GoogleChromeStandaloneEnterprise64.msi"
-          Invoke-WebRequest $chromeUrl -OutFile C:\RDPSetup\ChromeInstaller.msi
-          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i C:\RDPSetup\ChromeInstaller.msi /quiet /norestart" -Wait
+          Invoke-WebRequest $chromeUrl -OutFile C:\RDPEnhanced\ChromeInstaller.msi
+          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i C:\RDPEnhanced\ChromeInstaller.msi /quiet /norestart" -Wait
           Write-Output "Google Chrome installed successfully"
         continue-on-error: true
       - name: Install Python
         run: |
-          Invoke-WebRequest https://www.python.org/ftp/python/3.12.0/python-3.12.0-amd64.exe -OutFile C:\RDPSetup\python-installer.exe
-          Start-Process -FilePath C:\RDPSetup\python-installer.exe -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
+          Invoke-WebRequest https://www.python.org/ftp/python/3.12.0/python-3.12.0-amd64.exe -OutFile C:\RDPEnhanced\python-installer.exe
+          Start-Process -FilePath C:\RDPEnhanced\python-installer.exe -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
           Write-Output "Python 3.12 installed successfully"
         continue-on-error: true
       - name: Install Visual Studio Code
         run: |
-          Invoke-WebRequest https://update.code.visualstudio.com/latest/win32-x64-user/stable -OutFile C:\RDPSetup\VSCodeSetup.exe
-          Start-Process -FilePath C:\RDPSetup\VSCodeSetup.exe -ArgumentList "/VERYSILENT /MERGETASKS=!runcode" -Wait
+          Invoke-WebRequest https://update.code.visualstudio.com/latest/win32-x64-user/stable -OutFile C:\RDPEnhanced\VSCodeSetup.exe
+          Start-Process -FilePath C:\RDPEnhanced\VSCodeSetup.exe -ArgumentList "/VERYSILENT /MERGETASKS=!runcode" -Wait
           Write-Output "Visual Studio Code installed successfully"
         continue-on-error: true
-      - name: Start ngrok Tunnel
+      - name: Start ngrok Tunnel with Logging
         run: |
-          Start-Process -FilePath "C:\RDPSetup\ngrok\ngrok.exe" -ArgumentList "tcp 3389 --region us" -NoNewWindow
-      - name: Retrieve ngrok Tunnel Details
+          Start-Process -FilePath "C:\RDPEnhanced\ngrok\ngrok.exe" -ArgumentList "tcp 3389 --region us --log=stdout" -RedirectStandardOutput C:\RDPEnhanced\ngrok.log -NoNewWindow
+          Write-Output "ngrok tunnel started, logging to C:\RDPEnhanced\ngrok.log"
+      - name: Wait and Verify ngrok Tunnel
         run: |
-          Start-Sleep -Seconds 10
-          $tunnelInfo = Invoke-WebRequest -Uri http://localhost:4040/api/tunnels -UseBasicParsing | ConvertFrom-Json
-          $rdpUrl = $tunnelInfo.tunnels[0].public_url -replace '^tcp://', ''
-          echo "RDP_CONNECTION_URL=$rdpUrl" >> $env:GITHUB_ENV
-          echo "RDP Credentials:"
-          echo "Username: runneradmin"
-          echo "Password: RDPSetup2025!"
-          echo "Connect using an RDP client to: $rdpUrl"
+          $maxAttempts = 5
+          $attempt = 1
+          $tunnelUrl = $null
+          while ($attempt -le $maxAttempts -and $null -eq $tunnelUrl) {
+            Write-Output "Attempt $attempt to retrieve ngrok tunnel..."
+            Start-Sleep -Seconds 15
+            try {
+              $tunnelInfo = Invoke-WebRequest -Uri http://localhost:4040/api/tunnels -UseBasicParsing -ErrorAction Stop | ConvertFrom-Json
+              $tunnelUrl = $tunnelInfo.tunnels[0].public_url -replace '^tcp://', ''
+            } catch {
+              Write-Output "Failed to retrieve tunnel: $_"
+              $attempt++
+              if ($attempt -gt $maxAttempts) {
+                Write-Output "Max attempts reached. Check ngrok.log for details."
+                Get-Content -Path C:\RDPEnhanced\ngrok.log
+                exit 1
+              }
+            }
+          }
+          if ($tunnelUrl) {
+            echo "RDP_CONNECTION_URL=$tunnelUrl" >> $env:GITHUB_ENV
+            echo "RDP Credentials:"
+            echo "Username: runneradmin"
+            echo "Password: EnhancedRDP2025!"
+            echo "Connect using an RDP client to: $tunnelUrl"
+          }
       - name: Verify Software Installation
         run: |
           try { python --version } catch { Write-Output "Python verification failed" }
