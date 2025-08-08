@@ -1,53 +1,53 @@
-name: Free Windows RDP (6 Hours, Fixed)
+name: Free Windows RDP (6 Hours, Fixed & Working)
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  windows-rdp:
     runs-on: windows-latest
-    timeout-minutes: 360 # 6 hours
+    timeout-minutes: 360 # 6 hours max runtime
 
     steps:
     - name: Enable RDP & Set Password
+      shell: pwsh
       run: |
-        # Enable RDP
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-        
-        # Set password for RDP login
+        # Enable RDP connections
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+        Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'UserAuthentication' -Value 1
+
+        # Set password for RDP user 'runneradmin'
         net user runneradmin RDPpassword123!
 
     - name: Install Chrome, Python, VS Code, LocalXpose
+      shell: pwsh
       run: |
         choco install googlechrome -y
         choco install python -y
         choco install vscode -y
         choco install localxpose -y
 
-    - name: Start LocalXpose TCP Tunnel
+    - name: Start LocalXpose Tunnel and Keep Alive
+      shell: pwsh
       run: |
-        # Start tunnel to RDP (port 3389)
-        loclx tunnel tcp --port 3389 --region eu > C:\tunnel.txt 2>&1 &
-        timeout /t 15
-        type C:\tunnel.txt
+        Write-Host "Starting LocalXpose tunnel on port 3389 (RDP)..."
 
-    - name: Show RDP Connection Info
-      run: |
-        echo =========================================
-        echo   WINDOWS RDP DETAILS
-        echo =========================================
-        for /f "tokens=* delims=" %%A in (C:\tunnel.txt) do (
-            echo %%A | findstr /C:"tcp://"
-        )
-        echo Username: runneradmin
-        echo Password: RDPpassword123!
-        echo =========================================
-        echo COPY ABOVE INFO INTO YOUR RDP CLIENT
-        echo SESSION WILL LAST FOR 6 HOURS
-        echo =========================================
-      shell: cmd
+        # Start LocalXpose tunnel in a background job
+        $job = Start-Job { loclx tunnel tcp --port 3389 --region eu }
+        Start-Sleep -Seconds 15
 
-    - name: Keep RDP Session Alive
-      run: timeout /t 21600
+        # Capture and print tunnel info from the job output
+        $output = Receive-Job $job -Wait
+        foreach ($line in $output) {
+          if ($line -match "tcp://") {
+            Write-Host "RDP Tunnel Address: $line"
+          }
+        }
+
+        Write-Host "RDP Username: runneradmin"
+        Write-Host "RDP Password: RDPpassword123!"
+        Write-Host "Tunnel will stay active for 6 hours."
+
+        # Keep the job and tunnel alive for 6 hours
+        Start-Sleep -Seconds 21600
