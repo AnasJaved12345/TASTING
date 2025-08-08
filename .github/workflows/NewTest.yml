@@ -1,4 +1,4 @@
-name: Windows RDP 6hrs Free
+name: Free Windows RDP (6 Hours, LocalXpose)
 
 on:
   workflow_dispatch:
@@ -12,14 +12,17 @@ jobs:
     - name: Download LocalXpose
       run: |
         Invoke-WebRequest https://lxp-download.sgp1.digitaloceanspaces.com/localxpose.zip -OutFile localxpose.zip
-        Expand-Archive localxpose.zip -DestinationPath .
+        Expand-Archive localxpose.zip -DestinationPath C:\localxpose
 
-    - name: Enable RDP Access
+    - name: Enable RDP & Set Password
       run: |
+        # Enable RDP connections
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-        net user runneradmin YourSecurePassword123
+        
+        # Set password for runneradmin
+        net user runneradmin RDPpassword123!
 
     - name: Install Chrome, Python, VS Code
       run: |
@@ -29,18 +32,31 @@ jobs:
 
     - name: Start LocalXpose Tunnel
       run: |
-        .\localxpose\loclx.exe tunnel tcp --port 3389 > tunnel.txt 2>&1 &
+        cd C:\localxpose
+        cmd /c start /b loclx.exe tunnel tcp --port 3389 --region eu > C:\tunnel.txt 2>&1
         timeout /t 15
-        type tunnel.txt
+        type C:\tunnel.txt
 
-    - name: Show RDP Login Info
+    - name: Extract Tunnel Info
       run: |
-        echo =====================================
-        echo RDP Username: runneradmin
-        echo RDP Password: YourSecurePassword123
-        echo Copy the TCP address above and use it in RDP client.
-        echo Example: If you see tcp://0.tcp.ngrok-free.app:12345 use:
-        echo Host: 0.tcp.ngrok-free.app
-        echo Port: 12345
-        echo =====================================
-        timeout /t 21600
+        findstr /C:"tcp://" C:\tunnel.txt > C:\public_address.txt
+        echo =========================================
+        echo    WINDOWS RDP DETAILS
+        echo =========================================
+        for /f "tokens=* delims=" %%A in (C:\public_address.txt) do (
+            set ADDR=%%A
+            setlocal enabledelayedexpansion
+            set ADDR=!ADDR:tcp://=!
+            echo RDP Address: !ADDR!
+            endlocal
+        )
+        echo Username: runneradmin
+        echo Password: RDPpassword123!
+        echo =========================================
+        echo COPY THE ABOVE INFO INTO YOUR RDP CLIENT
+        echo SESSION WILL LAST FOR 6 HOURS
+        echo =========================================
+      shell: cmd
+
+    - name: Keep Session Alive
+      run: timeout /t 21600
