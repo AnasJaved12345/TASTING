@@ -1,4 +1,4 @@
-name: Free Windows RDP (6 Hours, Fixed & Working)
+name: Free Windows RDP (6 Hours, Show Full Details)
 
 on:
   workflow_dispatch:
@@ -6,18 +6,15 @@ on:
 jobs:
   windows-rdp:
     runs-on: windows-latest
-    timeout-minutes: 360 # 6 hours max runtime
+    timeout-minutes: 360
 
     steps:
     - name: Enable RDP & Set Password
       shell: pwsh
       run: |
-        # Enable RDP connections
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
         Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'UserAuthentication' -Value 1
-
-        # Set password for RDP user 'runneradmin'
         net user runneradmin RDPpassword123!
 
     - name: Install Chrome, Python, VS Code, LocalXpose
@@ -28,26 +25,42 @@ jobs:
         choco install vscode -y
         choco install localxpose -y
 
-    - name: Start LocalXpose Tunnel and Keep Alive
+    - name: Start LocalXpose Tunnel and Show Details
       shell: pwsh
       run: |
         Write-Host "Starting LocalXpose tunnel on port 3389 (RDP)..."
 
-        # Start LocalXpose tunnel in a background job
         $job = Start-Job { loclx tunnel tcp --port 3389 --region eu }
         Start-Sleep -Seconds 15
-
-        # Capture and print tunnel info from the job output
         $output = Receive-Job $job -Wait
-        foreach ($line in $output) {
-          if ($line -match "tcp://") {
-            Write-Host "RDP Tunnel Address: $line"
-          }
+
+        # Extract tcp:// line
+        $tcpLine = $output | Where-Object { $_ -match "^tcp://.*:\d+$" }
+
+        if (-not $tcpLine) {
+          Write-Error "Could not find TCP tunnel address in output!"
+          exit 1
         }
 
-        Write-Host "RDP Username: runneradmin"
-        Write-Host "RDP Password: RDPpassword123!"
-        Write-Host "Tunnel will stay active for 6 hours."
+        # Parse host and port
+        $tcpLine = $tcpLine.Trim()
+        $tcpLine = $tcpLine -replace "^tcp://", ""
+        $parts = $tcpLine.Split(":")
 
-        # Keep the job and tunnel alive for 6 hours
+        $host = $parts[0]
+        $port = $parts[1]
+
+        Write-Host ""
+        Write-Host "======================================="
+        Write-Host "           RDP CONNECTION DETAILS"
+        Write-Host "======================================="
+        Write-Host "Host:     $host"
+        Write-Host "Port:     $port"
+        Write-Host "Username: runneradmin"
+        Write-Host "Password: RDPpassword123!"
+        Write-Host "======================================="
+        Write-Host "Copy these details into your RDP client."
+        Write-Host "Tunnel will stay active for 6 hours."
+        Write-Host "======================================="
+
         Start-Sleep -Seconds 21600
